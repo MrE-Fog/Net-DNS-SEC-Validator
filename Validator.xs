@@ -3,9 +3,9 @@
 
      written by G. S. Marzot (marz@users.sourceforge.net)
 
-     Copyright (c) 2006 SPARTA, Inc.  All rights reserved.
+     Copyright (c) 2006-2007 SPARTA, Inc.  All rights reserved.
 
-     Copyright (c) 2006 G. S. Marzot. All rights reserved.
+     Copyright (c) 2006-2007 G. S. Marzot. All rights reserved.
 
      This program is free software; you can redistribute it and/or
      modify it under the same terms as Perl itself.
@@ -13,8 +13,6 @@
 #include "EXTERN.h"
 #include "perl.h"
 #include "XSUB.h"
-
-#include <validator.h> 
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,8 +27,8 @@
 #include <resolv.h>
 
 #include <arpa/nameser.h>
-#include <resolver.h>
-#include <validator.h>
+#include <validator/resolver.h>
+#include <validator/validator.h>
 
 
 #define PVAL_BUFSIZE	(16*1024)
@@ -168,6 +166,149 @@ static struct addrinfo *ainfo_sv2c(SV *ainfo_ref, struct addrinfo *ainfo_ptr)
   return ainfo_ptr;
 }
 
+SV *rr_c2sv(u_char *name, int type, int class, int ttl, int len, u_char *data)
+{
+  dSP ;
+  SV *rr = &PL_sv_undef;
+  char name_p[NS_MAXCDNAME];
+
+  if (ns_name_ntop(name, name_p, sizeof(name_p)) != -1) {
+    ENTER ;
+    SAVETMPS;
+
+    PUSHMARK(SP);
+    XPUSHs(sv_2mortal(newSVpv("Net::DNS::RR", 0))) ;
+    XPUSHs(sv_2mortal(newSVpv((char*)name_p, 0))) ;
+    XPUSHs(sv_2mortal(newSVpv(p_sres_type(type), 0))) ;
+    XPUSHs(sv_2mortal(newSVpv(p_class(class), 0))) ;
+    XPUSHs(sv_2mortal(newSViv(ttl))) ;
+    XPUSHs(sv_2mortal(newSViv(len))) ;
+    XPUSHs(sv_2mortal(newRV(sv_2mortal(newSVpvn((char*)data, len))))) ;
+    PUTBACK;
+
+    call_method("new_from_data", G_SCALAR);
+
+    SPAGAIN ;
+
+    rr = newSVsv(POPs);
+
+    PUTBACK ;
+    FREETMPS ;
+    LEAVE ;
+  }
+  return rr;
+}
+
+SV *rrset_c2sv(struct val_rrset *rrs_ptr)
+{
+  HV *rrset_hv;
+  SV *rrset_hv_ref = &PL_sv_undef;
+  AV *rrs_av;
+  SV *rrs_av_ref;
+  struct rr_rec *rr;
+
+  if (rrs_ptr) {
+    rrset_hv = newHV();
+    rrset_hv_ref = newRV_noinc((SV*)rrset_hv);
+
+    rrs_av = newAV();
+    rrs_av_ref = newRV_noinc((SV*)rrs_av);
+
+    for (rr = rrs_ptr->val_rrset_data; rr; rr = rr->rr_next) {
+      av_push(rrs_av, 
+	      rr_c2sv(rrs_ptr->val_rrset_name_n,
+		      rrs_ptr->val_rrset_type_h,
+		      rrs_ptr->val_rrset_class_h,
+		      rrs_ptr->val_rrset_ttl_h,
+		      rr->rr_rdata_length_h,
+		      rr->rr_rdata)
+	      );
+    }
+
+    hv_store(rrset_hv, "data", strlen("data"), rrs_av_ref, 0);
+
+    rrs_av = newAV();
+    rrs_av_ref = newRV_noinc((SV*)rrs_av);
+
+    for (rr = rrs_ptr->val_rrset_sig; rr; rr = rr->rr_next) {
+      av_push(rrs_av, 
+	      rr_c2sv(rrs_ptr->val_rrset_name_n,
+		      ns_t_rrsig,
+		      rrs_ptr->val_rrset_class_h,
+		      rrs_ptr->val_rrset_ttl_h,
+		      rr->rr_rdata_length_h,
+		      rr->rr_rdata)
+	      );
+    }
+
+    hv_store(rrset_hv, "sigs", strlen("s"), rrs_av_ref, 0);
+  }
+
+  return rrset_hv_ref;
+}
+
+SV *ac_c2sv(struct val_authentication_chain *ac_ptr)
+{
+  HV *ac_hv;
+  SV *ac_hv_ref = &PL_sv_undef;
+
+  if (ac_ptr) {
+    ac_hv = newHV();
+    ac_hv_ref = newRV_noinc((SV*)ac_hv);
+
+    hv_store(ac_hv, "status", strlen("status"), 
+	     newSViv(ac_ptr->val_ac_status), 0);
+
+    hv_store(ac_hv, "rrset", strlen("rrset"), 
+	     rrset_c2sv(ac_ptr->val_ac_rrset), 0);
+
+    hv_store(ac_hv, "trust", strlen("trust"), 
+	       ac_c2sv(ac_ptr->val_ac_trust), 0);
+  }
+
+  return ac_hv_ref;
+}
+
+SV *rc_c2sv(struct val_result_chain *rc_ptr)
+{
+  int i;
+  AV *rc_av = newAV();
+  SV *rc_av_ref = newRV_noinc((SV*)rc_av);
+  HV *result_hv;
+  SV *result_hv_ref;
+  AV *proofs_av;
+  SV *proofs_av_ref;
+
+  while (rc_ptr) {
+    result_hv = newHV();
+    result_hv_ref = newRV_noinc((SV*)result_hv);
+
+    hv_store(result_hv, "status", strlen("status"), 
+	     newSViv(rc_ptr->val_rc_status), 0);
+
+    /* fprintf(stderr, "rc status == %d\n", rc_ptr->val_rc_status); XXX */
+    
+    hv_store(result_hv, "answer", strlen("answer"), 
+	     ac_c2sv(rc_ptr->val_rc_answer), 0);
+
+    proofs_av = newAV();
+    proofs_av_ref = newRV_noinc((SV*)proofs_av);
+  
+    for(i=0; i < rc_ptr->val_rc_proof_count && 
+	  rc_ptr->val_rc_proof_count < MAX_PROOFS; i++) {
+      av_push(proofs_av, ac_c2sv(rc_ptr->val_rc_proofs[i]));
+    }
+
+    hv_store(result_hv, "proofs", strlen("proofs"), proofs_av_ref, 0);
+
+    av_push(rc_av, result_hv_ref);  
+
+    rc_ptr = rc_ptr->val_rc_next;
+  }
+
+  return rc_av_ref;
+}
+
 SV *ainfo_c2sv(struct val_addrinfo *ainfo_ptr)
 {
   AV *ainfo_av = newAV();
@@ -267,13 +408,35 @@ MODULE = Net::DNS::SEC::Validator	PACKAGE = Net::DNS::SEC::Validator	PREFIX = pv
 INCLUDE: const-xs.inc
 
 ValContext *
-pval_create_context(context=":")
-	char * context
+pval_create_context(policy)
+	char * policy
 	CODE:
 	{
 	ValContext *vc_ptr=NULL;
 
-	int result = val_create_context(context, &vc_ptr);
+	int result = val_create_context(policy, &vc_ptr);
+
+	RETVAL = (result ? NULL : vc_ptr);
+	}
+	OUTPUT:
+	RETVAL
+
+ValContext *
+pval_create_context_with_conf(policy,dnsval_conf,resolv_conf,root_hints)
+	char * policy = (SvOK($arg) ? (char *)SvPV($arg,PL_na) : NULL);
+        char *	dnsval_conf = (SvOK($arg) ? (char *)SvPV($arg,PL_na) : NULL);
+	char *	resolv_conf = (SvOK($arg) ? (char *)SvPV($arg,PL_na) : NULL);
+	char *	root_hints = (SvOK($arg) ? (char *)SvPV($arg,PL_na) : NULL);
+	CODE:
+	{
+	ValContext *vc_ptr=NULL;
+	//	fprintf(stderr,"pval_create_context_with_conf:%s:%s:%s\n",dnsval_conf,resolv_conf,root_hints);
+	int result = val_create_context_with_conf(policy, 
+						  dnsval_conf,
+						  resolv_conf,
+						  root_hints,
+						  &vc_ptr);
+	//	fprintf(stderr,"pval_create_context_with_confresult=%d):%lx\n",result,vc_ptr);
 
 	RETVAL = (result ? NULL : vc_ptr);
 	}
@@ -298,6 +461,7 @@ pval_getaddrinfo(self,node=NULL,service=NULL,hints_ref=NULL)
 	struct addrinfo		hints;
 	struct addrinfo *	hints_ptr = NULL;
 	struct val_addrinfo *	vainfo_ptr = NULL;
+	val_status_t            val_status;
 	int res;
 
 	ctx_ref = hv_fetch((HV*)SvRV(self), "_ctx_ptr", 8, 1);
@@ -315,9 +479,11 @@ pval_getaddrinfo(self,node=NULL,service=NULL,hints_ref=NULL)
 
 	hints_ptr = ainfo_sv2c(hints_ref, &hints);
 
-	res = val_getaddrinfo(ctx, node, service, hints_ptr, &vainfo_ptr);
+	res = val_getaddrinfo(ctx, node, service, hints_ptr, 
+			      &vainfo_ptr, &val_status);
 
-	//no val_status to return because its in each addrinfo struct
+	sv_setiv(*val_status_svp, val_status);
+	sv_setpv(*val_status_str_svp, p_val_status(val_status));
 
 	if (res == 0) {
 	  RETVAL = ainfo_c2sv(vainfo_ptr);
@@ -419,12 +585,12 @@ pval_res_query(self,dname,class,type)
         sv_setiv(*val_status_svp, 0);
         sv_setpv(*val_status_str_svp, "");
 	
-	//	fprintf(stderr,"before:%p:%s:%d:%d:%d:%d\n",ctx,dname,class,type,res,val_status);
+	//  fprintf(stderr,"before:%p:%s:%d:%d:%d:%d\n",ctx,dname,class,type,res,val_status);
 
 	res = val_res_query(ctx, dname, class, type, buf, PVAL_BUFSIZE,
                             &val_status);
 
-	//	fprintf(stderr,"after:%p:%s:%d:%d:%d:%d:%d:%s\n",ctx,dname,class,type,res,val_status,h_errno,hstrerror(h_errno));
+	//  fprintf(stderr,"after:%p:%s:%d:%d:%d:%d:%d:%s\n",ctx,dname,class,type,res,val_status,h_errno,hstrerror(h_errno));
         
 	sv_setiv(*val_status_svp, val_status);
         sv_setpv(*val_status_str_svp, p_val_status(val_status));
@@ -435,6 +601,72 @@ pval_res_query(self,dname,class,type)
           sv_setpv(*error_str_svp, hstrerror(h_errno));
 	} else {
 	  RETVAL =newSVpvn((char*)buf, res);
+	}
+	}
+	OUTPUT:
+	RETVAL
+
+
+SV *
+pval_resolve_and_check(self,domain,type,class,flags)
+	SV * self
+	char * domain
+        int type
+        int class
+        int flags
+	CODE:
+	{
+	ValContext *		ctx;
+	SV **			ctx_ref;
+	SV **			error_svp;
+        SV **			error_str_svp;
+        SV **			val_status_svp;
+	SV **			val_status_str_svp;
+	struct val_result_chain * val_rc_ptr = NULL;
+	int res;
+	u_char                  name_n[NS_MAXCDNAME];
+	fprintf(stderr, "here we are at the start\n");
+
+	ctx_ref = hv_fetch((HV*)SvRV(self), "_ctx_ptr", 8, 1);
+	ctx = (ValContext *)SvIV((SV*)SvRV(*ctx_ref));
+
+	error_svp = hv_fetch((HV*)SvRV(self), "error", 5, 1);
+        error_str_svp = hv_fetch((HV*)SvRV(self), "errorStr", 8, 1);
+	val_status_svp = hv_fetch((HV*)SvRV(self), "valStatus", 9, 1);
+        val_status_str_svp = hv_fetch((HV*)SvRV(self), "valStatusStr", 12, 1);
+        
+        sv_setiv(*error_svp, 0);
+        sv_setpv(*error_str_svp, "");
+        sv_setiv(*val_status_svp, 0);
+        sv_setpv(*val_status_str_svp, "");
+
+	RETVAL = &PL_sv_undef;
+	fprintf(stderr, "here we are way before\n");
+
+	if (ns_name_pton(domain, name_n, sizeof(name_n)) != -1) {
+
+	  val_log_add_optarg("7:stderr", 1); /* XXX */
+
+	  fprintf(stderr, "here we are before\n");
+	  res = val_resolve_and_check(ctx, (u_char*) name_n, 
+				      (u_int16_t) type, 
+				      (u_int16_t) class, 
+				      (u_int8_t) flags, 
+				      &val_rc_ptr);
+	  fprintf(stderr, "here we are after\n");
+	  val_log_authentication_chain(ctx, LOG_DEBUG,
+				       (u_char*) name_n, 
+				       (u_int16_t) type, 
+				       (u_int16_t) class, 
+				       val_rc_ptr);
+	  if (res == 0) {
+	    RETVAL = rc_c2sv(val_rc_ptr);
+	  } else {
+	    sv_setiv(*error_svp, res);
+	    sv_setpv(*error_str_svp, gai_strerror(res));
+	  }
+
+	  val_free_result_chain(val_rc_ptr);
 	}
 	}
 	OUTPUT:
@@ -471,12 +703,80 @@ pval_istrusted(err)
 	RETVAL
 
 
+int
+pval_isvalidated(err)
+	int err
+	CODE:
+	{
+	  RETVAL = val_isvalidated(err);
+	}
+	OUTPUT:
+	RETVAL
+
+
 char *
 pval_gai_strerror(err)
 	int err
 	CODE:
 	{
 	  RETVAL = (char*)gai_strerror(err);
+	}
+	OUTPUT:
+	RETVAL
+
+char *
+pval_resolv_conf_get()
+	CODE:
+	{
+	  RETVAL = resolv_conf_get();
+	}
+	OUTPUT:
+	RETVAL
+
+int
+pval_resolv_conf_set(file)
+	char *file
+	CODE:
+	{
+	  RETVAL = resolv_conf_set(file);
+	}
+	OUTPUT:
+	RETVAL
+
+char *
+pval_root_hints_get()
+	CODE:
+	{
+	  RETVAL = root_hints_get();
+	}
+	OUTPUT:
+	RETVAL
+
+int
+pval_root_hints_set(file)
+	char *file
+	CODE:
+	{
+	  RETVAL = root_hints_set(file);
+	}
+	OUTPUT:
+	RETVAL
+
+char *
+pval_dnsval_conf_get()
+	CODE:
+	{
+	  RETVAL = dnsval_conf_get();
+	}
+	OUTPUT:
+	RETVAL
+
+int
+pval_dnsval_conf_set(file)
+	char *file
+	CODE:
+	{
+	  RETVAL = dnsval_conf_set(file);
 	}
 	OUTPUT:
 	RETVAL

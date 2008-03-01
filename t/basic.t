@@ -9,13 +9,15 @@ BEGIN {
 
 use Test;
 
-BEGIN { $n = 46; plan tests => $n }
+BEGIN { $n = 55; plan tests => $n }
 
 use Net::DNS::SEC::Validator;
 use Net::DNS::Packet;
 use Net::hostent;
 use Net::addrinfo;
 use Socket qw(:all);
+
+require "./defines.pl";
 
 sub isnum {
     my $n = shift;
@@ -38,7 +40,14 @@ ok(isnum(SR_DNS_GENERIC_ERROR));
 
 ok(isnum(SR_NXDOMAIN));
 
-$validator = new Net::DNS::SEC::Validator(policy => ":");
+$validator = new Net::DNS::SEC::Validator();
+ok(defined($validator));
+
+$validator = new Net::DNS::SEC::Validator(policy => ":", 
+					  dnsval_conf=> $dnsval_conf,
+					  root_hints=> $root_hints,
+					  resolv_conf=> $resolv_conf,
+					  );
 ok(defined($validator));
 
 $r = $validator->policy(":");
@@ -47,12 +56,25 @@ ok($r);
 $r = $validator->policy("validate_tools:");
 ok($r);
 
+$r = $validator->dnsval_conf();
+ok($r eq $dnsval_conf);
+
+$r = $validator->root_hints();
+ok($r eq $root_hints);
+
+$r = $validator->resolv_conf();
+ok($r eq $resolv_conf);
+
+$validator = new Net::DNS::SEC::Validator( );
+
 @r = $validator->getaddrinfo("good-A.test.dnssec-tools.org");
 ok(@r);
+
 ok(defined $r[0] and ref($r[0]) eq 'Net::addrinfo');
-# there are 3 of these
+# there are 3x2 of these
 foreach $a (@r) {
     ok($validator->istrusted($a->val_status));
+    ok($validator->isvalidated($a->val_status));
 }
 
 $r =$validator->getaddrinfo("pastdate-AAAA.pastdate-ds.test.dnssec-tools.org");
@@ -92,7 +114,6 @@ ok(not $err);
 
 $r = $validator->res_query("good-A.good-ns.test.dnssec-tools.org", "IN", "A");
 ok($r);
-
 ($pkt, $err) = new Net::DNS::Packet(\$r);
 ok(not $err);
 
@@ -127,8 +148,13 @@ ok(not $err);
 
 # this crashes
 $r = $validator->res_query("mail.marzot.net", "IN", "MX");
-ok(!$r);
-ok($validator->{valStatus} == VAL_NONEXISTENT_TYPE_NOCHAIN);
+ok($r);
+ok($validator->{valStatus} == VAL_TRUSTED_ANSWER);
+ok($validator->istrusted());
+ok(!$validator->isvalidated());
+
+
+
 
 
 
