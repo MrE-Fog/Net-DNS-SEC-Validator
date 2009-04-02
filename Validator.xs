@@ -3,7 +3,7 @@
 
      written by G. S. Marzot (marz@users.sourceforge.net)
 
-     Copyright (c) 2006-2007 SPARTA, Inc.  All rights reserved.
+     Copyright (c) 2006-2008 SPARTA, Inc.  All rights reserved.
 
      Copyright (c) 2006-2007 G. S. Marzot. All rights reserved.
 
@@ -27,6 +27,8 @@
 #include <resolv.h>
 
 #include <arpa/nameser.h>
+
+#include <validator-config.h>
 #include <validator/resolver.h>
 #include <validator/validator.h>
 
@@ -166,46 +168,43 @@ static struct addrinfo *ainfo_sv2c(SV *ainfo_ref, struct addrinfo *ainfo_ptr)
   return ainfo_ptr;
 }
 
-SV *rr_c2sv(u_char *name, int type, int class, int ttl, int len, u_char *data)
+SV *rr_c2sv(char *name, int type, int class, long ttl, size_t len, u_char *data)
 {
   dSP ;
   SV *rr = &PL_sv_undef;
-  char name_p[NS_MAXCDNAME];
 
-  if (ns_name_ntop(name, name_p, sizeof(name_p)) != -1) {
-    ENTER ;
-    SAVETMPS;
+  ENTER ;
+  SAVETMPS;
 
-    PUSHMARK(SP);
-    XPUSHs(sv_2mortal(newSVpv("Net::DNS::RR", 0))) ;
-    XPUSHs(sv_2mortal(newSVpv((char*)name_p, 0))) ;
-    XPUSHs(sv_2mortal(newSVpv(p_sres_type(type), 0))) ;
-    XPUSHs(sv_2mortal(newSVpv(p_class(class), 0))) ;
-    XPUSHs(sv_2mortal(newSViv(ttl))) ;
-    XPUSHs(sv_2mortal(newSViv(len))) ;
-    XPUSHs(sv_2mortal(newRV(sv_2mortal(newSVpvn((char*)data, len))))) ;
-    PUTBACK;
+  PUSHMARK(SP);
+  XPUSHs(sv_2mortal(newSVpv("Net::DNS::RR", 0))) ;
+  XPUSHs(sv_2mortal(newSVpv((char*)name, 0))) ;
+  XPUSHs(sv_2mortal(newSVpv(p_sres_type(type), 0))) ;
+  XPUSHs(sv_2mortal(newSVpv(p_class(class), 0))) ;
+  XPUSHs(sv_2mortal(newSViv(ttl))) ;
+  XPUSHs(sv_2mortal(newSViv(len))) ;
+  XPUSHs(sv_2mortal(newRV(sv_2mortal(newSVpvn((char*)data, len))))) ;
+  PUTBACK;
 
-    call_method("new_from_data", G_SCALAR);
+  call_method("new_from_data", G_SCALAR);
 
-    SPAGAIN ;
+  SPAGAIN ;
 
-    rr = newSVsv(POPs);
+  rr = newSVsv(POPs);
 
-    PUTBACK ;
-    FREETMPS ;
-    LEAVE ;
-  }
+  PUTBACK ;
+  FREETMPS ;
+  LEAVE ;
   return rr;
 }
 
-SV *rrset_c2sv(struct val_rrset *rrs_ptr)
+SV *rrset_c2sv(struct val_rrset_rec *rrs_ptr)
 {
   HV *rrset_hv;
   SV *rrset_hv_ref = &PL_sv_undef;
   AV *rrs_av;
   SV *rrs_av_ref;
-  struct rr_rec *rr;
+  struct val_rr_rec *rr;
 
   if (rrs_ptr) {
     rrset_hv = newHV();
@@ -216,32 +215,32 @@ SV *rrset_c2sv(struct val_rrset *rrs_ptr)
 
     for (rr = rrs_ptr->val_rrset_data; rr; rr = rr->rr_next) {
       av_push(rrs_av, 
-	      rr_c2sv(rrs_ptr->val_rrset_name_n,
-		      rrs_ptr->val_rrset_type_h,
-		      rrs_ptr->val_rrset_class_h,
-		      rrs_ptr->val_rrset_ttl_h,
-		      rr->rr_rdata_length_h,
+	      rr_c2sv(rrs_ptr->val_rrset_name,
+		      rrs_ptr->val_rrset_type,
+		      rrs_ptr->val_rrset_class,
+		      rrs_ptr->val_rrset_ttl,
+		      rr->rr_rdata_length,
 		      rr->rr_rdata)
 	      );
     }
 
-    hv_store(rrset_hv, "data", strlen("data"), rrs_av_ref, 0);
+    (void)hv_store(rrset_hv, "data", strlen("data"), rrs_av_ref, 0);
 
     rrs_av = newAV();
     rrs_av_ref = newRV_noinc((SV*)rrs_av);
 
     for (rr = rrs_ptr->val_rrset_sig; rr; rr = rr->rr_next) {
       av_push(rrs_av, 
-	      rr_c2sv(rrs_ptr->val_rrset_name_n,
+	      rr_c2sv(rrs_ptr->val_rrset_name,
 		      ns_t_rrsig,
-		      rrs_ptr->val_rrset_class_h,
-		      rrs_ptr->val_rrset_ttl_h,
-		      rr->rr_rdata_length_h,
+		      rrs_ptr->val_rrset_class,
+		      rrs_ptr->val_rrset_ttl,
+		      rr->rr_rdata_length,
 		      rr->rr_rdata)
 	      );
     }
 
-    hv_store(rrset_hv, "sigs", strlen("s"), rrs_av_ref, 0);
+    (void)hv_store(rrset_hv, "sigs", strlen("s"), rrs_av_ref, 0);
   }
 
   return rrset_hv_ref;
@@ -256,13 +255,13 @@ SV *ac_c2sv(struct val_authentication_chain *ac_ptr)
     ac_hv = newHV();
     ac_hv_ref = newRV_noinc((SV*)ac_hv);
 
-    hv_store(ac_hv, "status", strlen("status"), 
+    (void)hv_store(ac_hv, "status", strlen("status"), 
 	     newSViv(ac_ptr->val_ac_status), 0);
 
-    hv_store(ac_hv, "rrset", strlen("rrset"), 
+    (void)hv_store(ac_hv, "rrset", strlen("rrset"), 
 	     rrset_c2sv(ac_ptr->val_ac_rrset), 0);
 
-    hv_store(ac_hv, "trust", strlen("trust"), 
+    (void)hv_store(ac_hv, "trust", strlen("trust"), 
 	       ac_c2sv(ac_ptr->val_ac_trust), 0);
   }
 
@@ -283,13 +282,18 @@ SV *rc_c2sv(struct val_result_chain *rc_ptr)
     result_hv = newHV();
     result_hv_ref = newRV_noinc((SV*)result_hv);
 
-    hv_store(result_hv, "status", strlen("status"), 
+    (void)hv_store(result_hv, "status", strlen("status"), 
 	     newSViv(rc_ptr->val_rc_status), 0);
 
     /* fprintf(stderr, "rc status == %d\n", rc_ptr->val_rc_status); XXX */
     
-    hv_store(result_hv, "answer", strlen("answer"), 
-	     ac_c2sv(rc_ptr->val_rc_answer), 0);
+    if (rc_ptr->val_rc_answer != NULL) {
+        (void)hv_store(result_hv, "answer", strlen("answer"), 
+	        ac_c2sv(rc_ptr->val_rc_answer), 0);
+    } else {
+        (void)hv_store(result_hv, "rrset", strlen("rrset"),
+            rrset_c2sv(rc_ptr->val_rc_rrset), 0);
+    }
 
     proofs_av = newAV();
     proofs_av_ref = newRV_noinc((SV*)proofs_av);
@@ -299,7 +303,7 @@ SV *rc_c2sv(struct val_result_chain *rc_ptr)
       av_push(proofs_av, ac_c2sv(rc_ptr->val_rc_proofs[i]));
     }
 
-    hv_store(result_hv, "proofs", strlen("proofs"), proofs_av_ref, 0);
+    (void)hv_store(result_hv, "proofs", strlen("proofs"), proofs_av_ref, 0);
 
     av_push(rc_av, result_hv_ref);  
 
@@ -309,7 +313,7 @@ SV *rc_c2sv(struct val_result_chain *rc_ptr)
   return rc_av_ref;
 }
 
-SV *ainfo_c2sv(struct val_addrinfo *ainfo_ptr)
+SV *ainfo_c2sv(struct addrinfo *ainfo_ptr)
 {
   AV *ainfo_av = newAV();
   SV *ainfo_av_ref = newRV_noinc((SV*)ainfo_av);
@@ -326,25 +330,22 @@ SV *ainfo_c2sv(struct val_addrinfo *ainfo_ptr)
     // fprintf(stderr,"::ainfo_ptr->ai_protocol=%d\n", ainfo_ptr->ai_protocol);
     // fprintf(stderr,"::ainfo_ptr->ai_addrlen=%d\n", ainfo_ptr->ai_addrlen);
     //fprintf(stderr,"::ainfo_ptr->ai_canonname=%s\n",ainfo_ptr->ai_canonname);
-    hv_store(ainfo_hv, "flags", strlen("flags"), 
+    (void)hv_store(ainfo_hv, "flags", strlen("flags"), 
 	     newSViv(ainfo_ptr->ai_flags), 0);
-    hv_store(ainfo_hv, "family", strlen("family"), 
+    (void)hv_store(ainfo_hv, "family", strlen("family"), 
 	     newSViv(ainfo_ptr->ai_family), 0);
-    hv_store(ainfo_hv, "socktype", strlen("socktype"), 
+    (void)hv_store(ainfo_hv, "socktype", strlen("socktype"), 
 	     newSViv(ainfo_ptr->ai_socktype), 0);
-    hv_store(ainfo_hv, "protocol", strlen("protocol"), 
+    (void)hv_store(ainfo_hv, "protocol", strlen("protocol"), 
 	     newSViv(ainfo_ptr->ai_protocol), 0);
-    hv_store(ainfo_hv, "addr", strlen("addr"), 
+    (void)hv_store(ainfo_hv, "addr", strlen("addr"), 
 	     newSVpv((char*)ainfo_ptr->ai_addr, 
 		     ainfo_ptr->ai_addrlen), 0);
-    hv_store(ainfo_hv, "canonname", strlen("canonname"), 
+    (void)hv_store(ainfo_hv, "canonname", strlen("canonname"), 
 	     (ainfo_ptr->ai_canonname ?
 	      newSVpv(ainfo_ptr->ai_canonname, 
 		      strlen(ainfo_ptr->ai_canonname)) :
 	     &PL_sv_undef), 0);
-    // special field for validated ainfo
-    hv_store(ainfo_hv, "val_status", strlen("val_status"), 
-	     newSViv(ainfo_ptr->ai_val_status), 0);
 
     av_push(ainfo_av, ainfo_hv_ref);
   }  
@@ -431,6 +432,9 @@ pval_create_context_with_conf(policy,dnsval_conf,resolv_conf,root_hints)
 	{
 	ValContext *vc_ptr=NULL;
 	//	fprintf(stderr,"pval_create_context_with_conf:%s:%s:%s\n",dnsval_conf,resolv_conf,root_hints);
+
+	//val_log_add_optarg("7:stderr", 1); /* XXX */
+
 	int result = val_create_context_with_conf(policy, 
 						  dnsval_conf,
 						  resolv_conf,
@@ -460,7 +464,7 @@ pval_getaddrinfo(self,node=NULL,service=NULL,hints_ref=NULL)
 	SV **			val_status_str_svp;
 	struct addrinfo		hints;
 	struct addrinfo *	hints_ptr = NULL;
-	struct val_addrinfo *	vainfo_ptr = NULL;
+	struct addrinfo *	ainfo_ptr = NULL;
 	val_status_t            val_status;
 	int res;
 
@@ -480,20 +484,20 @@ pval_getaddrinfo(self,node=NULL,service=NULL,hints_ref=NULL)
 	hints_ptr = ainfo_sv2c(hints_ref, &hints);
 
 	res = val_getaddrinfo(ctx, node, service, hints_ptr, 
-			      &vainfo_ptr, &val_status);
+			      &ainfo_ptr, &val_status);
 
 	sv_setiv(*val_status_svp, val_status);
 	sv_setpv(*val_status_str_svp, p_val_status(val_status));
 
 	if (res == 0) {
-	  RETVAL = ainfo_c2sv(vainfo_ptr);
+	  RETVAL = ainfo_c2sv(ainfo_ptr);
 	} else {
 	  sv_setiv(*error_svp, res);
 	  sv_setpv(*error_str_svp, gai_strerror(res));
 	  RETVAL = &PL_sv_undef;
 	}
 
-	val_freeaddrinfo(vainfo_ptr);
+	freeaddrinfo(ainfo_ptr);
 	}
 	OUTPUT:
 	RETVAL
@@ -624,8 +628,7 @@ pval_resolve_and_check(self,domain,type,class,flags)
 	SV **			val_status_str_svp;
 	struct val_result_chain * val_rc_ptr = NULL;
 	int res;
-	u_char                  name_n[NS_MAXCDNAME];
-	fprintf(stderr, "here we are at the start\n");
+	//fprintf(stderr, "here we are at the start\n");
 
 	ctx_ref = hv_fetch((HV*)SvRV(self), "_ctx_ptr", 8, 1);
 	ctx = (ValContext *)SvIV((SV*)SvRV(*ctx_ref));
@@ -641,23 +644,20 @@ pval_resolve_and_check(self,domain,type,class,flags)
         sv_setpv(*val_status_str_svp, "");
 
 	RETVAL = &PL_sv_undef;
-	fprintf(stderr, "here we are way before\n");
+	//fprintf(stderr, "here we are way before\n");
 
-	if (ns_name_pton(domain, name_n, sizeof(name_n)) != -1) {
 
-	  val_log_add_optarg("7:stderr", 1); /* XXX */
-
-	  fprintf(stderr, "here we are before\n");
-	  res = val_resolve_and_check(ctx, (u_char*) name_n, 
-				      (u_int16_t) type, 
-				      (u_int16_t) class, 
-				      (u_int8_t) flags, 
+	  //fprintf(stderr, "here we are before\n");
+	  res = val_resolve_and_check(ctx, domain, 
+				      class, 
+				      type, 
+				      (u_int32_t) flags, 
 				      &val_rc_ptr);
-	  fprintf(stderr, "here we are after\n");
+	  //fprintf(stderr, "here we are after\n");
 	  val_log_authentication_chain(ctx, LOG_DEBUG,
-				       (u_char*) name_n, 
-				       (u_int16_t) type, 
-				       (u_int16_t) class, 
+				       domain, 
+				       class, 
+				       type, 
 				       val_rc_ptr);
 	  if (res == 0) {
 	    RETVAL = rc_c2sv(val_rc_ptr);
@@ -667,7 +667,6 @@ pval_resolve_and_check(self,domain,type,class,flags)
 	  }
 
 	  val_free_result_chain(val_rc_ptr);
-	}
 	}
 	OUTPUT:
 	RETVAL

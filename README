@@ -129,7 +129,6 @@ $validator->resolve_and_check(<name>[, <class>[, <type> [, <flags>]]])
       <class> 	=> is the DNS class of the record being queried (default: IN)
       <type>	=> is the DNS record type being queried (defailt A)
       <flags>	=> are the libval resolve_and_check control flags
-			(e.g., VAL_QUERY_MERGE_RRSETS, etc.)
 
    returns:
 	returns a complex data structure of all answers and proofs
@@ -228,6 +227,6 @@ Copyright:
    is free software; you can redistribute it and/or modify it under
    the same terms as Perl itself.
 
-   Copyright (c) 2006 SPARTA, Inc.  All Rights Reserved.  This program
+   Copyright (c) 2006-2008 SPARTA, Inc.  All Rights Reserved.  This program
    is free software; you can redistribute it and/or modify it under
    the same terms as Perl itself.
